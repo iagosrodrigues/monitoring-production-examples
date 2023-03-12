@@ -1,0 +1,21 @@
+apiVersion: v2
+description: kube-prometheus-stack-adapter combines kube-prometheus-stack and prometheus-adapter
+icon: https://raw.githubusercontent.com/prometheus/prometheus.github.io/master/assets/prometheus_logo-cb55bb5c346.png
+engine: gotpl
+type: application
+maintainers:
+  - name: Iago Sousa
+name: kube-prometheus-stack-adapter
+sources:
+  - ""
+version: 0.1.0
+appVersion: 0.1.0
+kubeVersion: ">=1.16.0-0"
+dependencies:
+  - name: kube-prometheus-stack
+    version: 45.7.1
+    repository: https://prometheus-community.github.io/helm-charts
+  - name: prometheus-adapter
+    version: 4.1.1
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: prometheus-adapter.enabled

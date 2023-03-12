@@ -1,0 +1,120 @@
+kube-prometheus-stack:
+  # Utilizaremos o serviço como load balancer interno para que não seja exposto para o mundo externo
+  prometheus:
+    service:
+      type: LoadBalancer
+      annotations:
+        # Consulte a cloud provider utilizada para saber como criar um load balancer interno
+        service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      # É possível definir um IP fixo para o load balancer caso a cloud provider permita, isso é útil para reutilizar o IP
+      # loadBalancerIP: 127.0.0.1
+
+  # Dependendo da cloud provider, os componentes a seguir podem não estar disponíveis para visualização
+  # É possível verificar se eles estão disponíveis vendo o namespace kube-system
+  kubeScheduler:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+
+  # O componente kube-proxy pode ter labels diferentes dependendo da cloud provider
+  kubeProxy:
+    service:
+      selector:
+        component: kube-proxy
+
+  # Configuramos o AlertManager para disparar as notificações via Telegram
+  alertmanager:
+    enabled: true
+    config:
+      global:
+        resolve_timeout: 5m
+      inhibit_rules:
+        - source_matchers:
+            - "severity = critical"
+          target_matchers:
+            - "severity =~ warning|info"
+          equal:
+            - "namespace"
+            - "alertname"
+        - source_matchers:
+            - "severity = warning"
+          target_matchers:
+            - "severity = info"
+          equal:
+            - "namespace"
+            - "alertname"
+        - source_matchers:
+            - "alertname = InfoInhibitor"
+          target_matchers:
+            - "severity = info"
+          equal:
+            - "namespace"
+      route:
+        group_by: ["namespace"]
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 12h
+        receiver: "null"
+        routes:
+          - receiver: "null"
+            matchers:
+              - alertname =~ "InfoInhibitor|Watchdog"
+          - receiver: "telegram-receiver"
+            matchers:
+              - severity = "critical|warning"
+      receivers:
+        - name: "null"
+        - name: telegram-receiver
+          telegram_configs:
+            - bot_token: token
+              chat_id: chat_id
+              api_url: https://api.telegram.org
+              parse_mode: HTML
+
+  # Desabilite caso necessário
+  grafana:
+    enabled: false
+
+  # Regras adicionais para monitoramento do cluster
+  additionalPrometheusRulesMap:
+    devops:
+      groups:
+        - name: devops
+          rules:
+            - alert: TooManyRestarts
+              expr: round(avg(increase(kube_pod_container_status_restarts_total[24h])) by (container)) >= 5
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: Too many restarts for service {{ $labels.container }}
+                description: "Too many restarts for service \n {{ $labels.container }} \n in the namespace {{ $labels.namespace }}"
+            - alert: OOMKilled
+              expr: avg by (container) (increase(kube_pod_container_status_restarts_total[15m]) and on (container) kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}) > 0
+              for: 15m
+              labels:
+                severity: warning
+              annotations:
+                summary: Service {{ $labels.container }} received an OOMKill signal.
+                description: "The service \n {{ $labels.container }} \n in the namespace {{ $labels.namespace }} has received an oom signal, so the pod exceeded the memory limit."
+
+# Ativamos o adapter para registrar algumas métricas expostas pelo micrometer do Spring Boot
+prometheus-adapter:
+  enabled: true
+  rules:
+    default: true
+    custom:
+      - seriesQuery: '{__name__=~"^http_server_requests_seconds_.*",container!="POD",namespace!="",pod!=""}'
+        seriesFilters: []
+        resources:
+          overrides:
+            namespace:
+              resource: namespace
+            pod:
+              resource: pod
+        name:
+          matches: "^http_server_requests_seconds_count$"
+          as: "sum_http_server_requests_seconds_count_filted"
+        metricsQuery: sum(rate(<<.Series>>{<<.LabelMatchers>>,uri!~"UNKNOWN|^/actuator/.*"}[5m])) by (<<.GroupBy>>)

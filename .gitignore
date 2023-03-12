@@ -1,0 +1,2 @@
+# Ignore charts dependencies in git
+**/charts
